@@ -38,6 +38,14 @@ export default function PredictionMarketLanding() {
             <Link href="https://docs.google.com/presentation/d/1CKEc-DsPd77d4dfWvcRMpfT6XwNWIEwWOX07OE_bm8I/edit?usp=sharing" className="hover:text-[#affc40] transition-colors" target="_blank" rel="noreferrer">
               Pitch Deck
             </Link>
+            <Link
+              href="/Litepaper%20-%20DePredict%20external%20price%20discovery.pdf"
+              className="hover:text-[#affc40] transition-colors"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Litepaper
+            </Link>
           </nav>
         </div>
       </header>
@@ -65,32 +73,12 @@ export default function PredictionMarketLanding() {
                 <ArrowRight className="w-4 h-4" />
               </Link>
               <Link
-                href="https://docs.depredict.xyz"
+                href="https://demo.depredict.xyz"
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-white/20 text-base font-semibold text-white hover:border-[#affc40]/70 hover:text-[#affc40] transition-all"
               >
-                Explore the Docs
-                <ArrowUpRight className="w-4 h-4" />
-              </Link>
-            </div>
-            <div className="mt-8 flex flex-col sm:flex-row sm:items-center gap-6 text-sm text-slate-400">
-              <Link
-                href="https://demo.depredict.xyz"
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 hover:text-[#affc40] transition-colors"
-              >
-                <span>View the devnet prediction market demo</span>
-                <ArrowUpRight className="w-4 h-4" />
-              </Link>
-              <Link
-                href="https://docs.google.com/presentation/d/1CKEc-DsPd77d4dfWvcRMpfT6XwNWIEwWOX07OE_bm8I/edit?usp=sharing"
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 hover:text-[#affc40] transition-colors"
-              >
-                <span>Review the dePredict pitch deck</span>
+                Try the Demo
                 <ArrowUpRight className="w-4 h-4" />
               </Link>
             </div>
@@ -130,8 +118,8 @@ export default function PredictionMarketLanding() {
         </section>
 
         <section className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pb-24">
-          <div className="grid gap-8 lg:grid-cols-[1.4fr_1fr] items-center">
-            <div className="p-10 rounded-3xl bg-gradient-to-br from-slate-900/80 via-slate-900/30 to-[#affc40]/15 border border-[#affc40]/30 shadow-xl shadow-[0_35px_80px_-40px_rgba(175,252,64,0.7)] backdrop-blur-sm">
+          <div className="grid gap-8 lg:grid-cols-2 items-stretch">
+            <div className="p-10 rounded-3xl bg-gradient-to-br from-slate-900/80 via-slate-900/30 to-[#affc40]/15 border border-[#affc40]/30 shadow-xl shadow-[0_35px_80px_-40px_rgba(175,252,64,0.7)] backdrop-blur-sm h-full">
               <h2 className="text-3xl font-semibold mb-6">Builders ship faster with dePredict</h2>
               <ul className="space-y-4 text-sm text-slate-300">
                 <li className="flex items-start gap-3">
@@ -168,55 +156,35 @@ export default function PredictionMarketLanding() {
                 </Link>
               </div>
             </div>
-            <div className="p-6 rounded-3xl bg-slate-950/60 border border-[#affc40]/25 backdrop-blur-sm">
-              <div className="w-12 h-12 rounded-xl bg-[#affc40]/15 border border-[#affc40]/35 flex items-center justify-center text-[#affc40] mb-5">
-                <Rocket className="w-6 h-6" />
-              </div>
-              <h3 className="text-2xl font-semibold mb-4">For developers & startups</h3>
-              <p className="text-sm text-slate-300 leading-relaxed">
-                Ready to build on day one? Jump straight to the docs for deep dives on market creation, liquidity provisioning, and integration patterns tailored to your use case.
+            <div className="p-10 rounded-3xl border border-[#affc40]/35 bg-gradient-to-br from-[#affc40]/15 via-slate-950/70 to-slate-950/90 shadow-[0_40px_90px_-50px_rgba(175,252,64,0.85)] shadow-lg backdrop-blur text-center flex flex-col justify-center h-full">
+              <h2 className="text-3xl font-semibold mb-4">Let’s build the next generation of on-chain markets</h2>
+              <p className="text-slate-300 max-w-2xl mx-auto">
+                Whether you&apos;re a sports book, DeFi protocol, or web3 community launching novel incentive flows, dePredict is the infrastructure powering your market.
               </p>
-              <Link
-                href="https://docs.depredict.xyz"
-                target="_blank"
-                rel="noreferrer"
-                className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-[#affc40] hover:text-[#c3ff6e] transition-colors"
-              >
-                Go to docs.depredict.xyz
-                <ArrowUpRight className="w-4 h-4" />
-              </Link>
+              <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
+                <Link
+                  href="https://forms.gle/gTaywXj9T55TUgX29"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-[#affc40] to-[#9cf529] text-base font-semibold text-slate-950 shadow-lg shadow-[0_18px_30px_-16px_rgba(175,252,64,0.6)] hover:from-[#caff61] hover:to-[#affc40] transition-all"
+                >
+                  Talk to the team
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+                <Link
+                  href="https://docs.google.com/presentation/d/1CKEc-DsPd77d4dfWvcRMpfT6XwNWIEwWOX07OE_bm8I/edit?usp=sharing"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 px-6 py-3 rounded-xl border border-white/20 text-base font-semibold text-white hover:text-[#affc40] hover:border-[#affc40]/60 transition-all"
+                >
+                  View our pitch deck
+                  <ArrowUpRight className="w-4 h-4" />
+                </Link>
+              </div>
             </div>
           </div>
         </section>
 
-        <section className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pb-32">
-          <div className="rounded-3xl border border-[#affc40]/35 bg-gradient-to-br from-[#affc40]/15 via-slate-950/70 to-slate-950/90 p-10 text-center shadow-[0_40px_90px_-50px_rgba(175,252,64,0.85)] shadow-lg backdrop-blur">
-            <h2 className="text-3xl font-semibold mb-4">Let’s build the next generation of on-chain markets</h2>
-            <p className="text-slate-300 max-w-2xl mx-auto">
-              Whether you&apos;re a sports book, DeFi protocol, or web3 community launching novel incentive flows, dePredict is the infrastructure powering your market.
-            </p>
-            <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
-              <Link
-                href="https://forms.gle/gTaywXj9T55TUgX29"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-[#affc40] to-[#9cf529] text-base font-semibold text-slate-950 shadow-lg shadow-[0_18px_30px_-16px_rgba(175,252,64,0.6)] hover:from-[#caff61] hover:to-[#affc40] transition-all"
-              >
-                Talk to the team
-                <ArrowRight className="w-4 h-4" />
-              </Link>
-              <Link
-                href="https://docs.google.com/presentation/d/1CKEc-DsPd77d4dfWvcRMpfT6XwNWIEwWOX07OE_bm8I/edit?usp=sharing"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl border border-white/20 text-base font-semibold text-white hover:text-[#affc40] hover:border-[#affc40]/60 transition-all"
-              >
-                View our pitch deck
-                <ArrowUpRight className="w-4 h-4" />
-              </Link>
-            </div>
-          </div>
-        </section>
       </main>
 
       <footer className="relative border-t border-[#affc40]/20 bg-slate-950/60 backdrop-blur-lg">
@@ -235,6 +203,9 @@ export default function PredictionMarketLanding() {
             </Link>
             <Link href="https://forms.gle/gTaywXj9T55TUgX29" target="_blank" rel="noreferrer" className="hover:text-[#affc40] transition-colors">
               Contact
+            </Link>
+            <Link href="/Litepaper%20-%20DePredict%20external%20price%20discovery.pdf" target="_blank" rel="noreferrer" className="hover:text-[#affc40] transition-colors">
+              Litepaper
             </Link>
           </div>
         </div>
