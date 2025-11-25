@@ -35,7 +35,7 @@ export default function PredictionMarketLanding() {
             <Link href="https://forms.gle/gTaywXj9T55TUgX29" className="hover:text-[#affc40] transition-colors" target="_blank" rel="noreferrer">
               Join the Waitlist
             </Link>
-            <Link href="https://docs.google.com/presentation/d/1CKEc-DsPd77d4dfWvcRMpfT6XwNWIEwWOX07OE_bm8I/edit?usp=sharing" className="hover:text-[#affc40] transition-colors" target="_blank" rel="noreferrer">
+            <Link href="https://drive.google.com/file/d/15oclk-4eWEYtQ7fbsOPGduKccIIMBGDw/view?usp=sharing" className="hover:text-[#affc40] transition-colors" target="_blank" rel="noreferrer">
               Pitch Deck
             </Link>
             <Link
@@ -172,7 +172,7 @@ export default function PredictionMarketLanding() {
                   <ArrowRight className="w-4 h-4" />
                 </Link>
                 <Link
-                  href="https://docs.google.com/presentation/d/1CKEc-DsPd77d4dfWvcRMpfT6XwNWIEwWOX07OE_bm8I/edit?usp=sharing"
+                  href="https://drive.google.com/file/d/15oclk-4eWEYtQ7fbsOPGduKccIIMBGDw/view?usp=sharing"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 px-6 py-3 rounded-xl border border-white/20 text-base font-semibold text-white hover:text-[#affc40] hover:border-[#affc40]/60 transition-all"
