@@ -53,9 +53,9 @@ export default function PredictionMarketLanding() {
       <main className="relative">
         <section className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
           <div className="max-w-3xl">
-            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#affc40]/10 border border-[#affc40]/40 text-xs font-semibold text-[#affc40] uppercase tracking-[0.25em]">
+            {/* <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#affc40]/10 border border-[#affc40]/40 text-xs font-semibold text-[#affc40] uppercase tracking-[0.25em]">
               Raising $650k Pre-Seed Now
-            </span>
+            </span> */}
             <h1 className="mt-8 text-4xl sm:text-5xl lg:text-6xl font-bold leading-tight">
               The infrastructure layer for decentralised prediction markets on Solana.
             </h1>
