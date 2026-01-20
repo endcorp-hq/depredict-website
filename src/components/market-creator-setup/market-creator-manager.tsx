@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useWallet, useConnection } from '@solana/wallet-adapter-react'
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base'
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
+import WalletButton from '@/components/wallet-button'
 import { PublicKey, SendTransactionError, Transaction } from '@solana/web3.js'
 import bs58 from 'bs58'
 import DepredictClient from '@endcorp/depredict'
@@ -94,46 +94,49 @@ export default function MarketCreatorManager() {
         // Use DAS API to search for assets (collections) by owner/update authority
         // Search for assets grouped by collection where the update authority is our market creator PDA
         if (typeof rpc.searchAssets === 'function') {
-          try {
-            const searchResult = await rpc.searchAssets({
-              owner: umiMarketCreatorPDA.toString(),
-              grouping: ['collection'],
-              limit: 100,
-            })
+          const searchResult = await (async () => {
+            try {
+              return await rpc.searchAssets({
+                owner: umiMarketCreatorPDA.toString(),
+                grouping: ['collection'],
+                limit: 100,
+              })
+            } catch (dasErr) {
+              const message = dasErr instanceof Error ? dasErr.message : String(dasErr)
+              if (message.toLowerCase().includes('no assets found')) {
+                return null
+              }
+              throw dasErr
+            }
+          })()
 
-            if (searchResult && searchResult.items) {
-              // Extract unique collection addresses
-              const collectionMap = new Map<string, CollectionInfo>()
-              
-              for (const item of searchResult.items) {
-                if (item.grouping && item.grouping.length > 0) {
-                  const collectionGroup = item.grouping.find((g: any) => g.group_key === 'collection')
-                  if (collectionGroup && collectionGroup.group_value) {
-                    try {
-                      const collectionAddress = new PublicKey(collectionGroup.group_value)
-                      const isActive = collectionAddress.equals(activeCollection)
-                      
-                      if (!collectionMap.has(collectionAddress.toBase58())) {
-                        collectionMap.set(collectionAddress.toBase58(), {
-                          address: collectionAddress,
-                          name: item.content?.metadata?.name,
-                          isActive,
-                        })
-                      }
-                    } catch {
-                      // Skip invalid addresses
+          if (searchResult && searchResult.items) {
+            // Extract unique collection addresses
+            const collectionMap = new Map<string, CollectionInfo>()
+            
+            for (const item of searchResult.items) {
+              if (item.grouping && item.grouping.length > 0) {
+                const collectionGroup = item.grouping.find((g: any) => g.group_key === 'collection')
+                if (collectionGroup && collectionGroup.group_value) {
+                  try {
+                    const collectionAddress = new PublicKey(collectionGroup.group_value)
+                    const isActive = collectionAddress.equals(activeCollection)
+                    
+                    if (!collectionMap.has(collectionAddress.toBase58())) {
+                      collectionMap.set(collectionAddress.toBase58(), {
+                        address: collectionAddress,
+                        name: item.content?.metadata?.name,
+                        isActive,
+                      })
                     }
+                  } catch {
+                    // Skip invalid addresses
                   }
                 }
               }
-              
-              collectionsList.push(...Array.from(collectionMap.values()))
             }
-          } catch (dasErr) {
-            const message = dasErr instanceof Error ? dasErr.message : String(dasErr)
-            if (!message.toLowerCase().includes('no assets found')) {
-              console.error('DAS search failed:', dasErr)
-            }
+            
+            collectionsList.push(...Array.from(collectionMap.values()))
           }
         }
 
@@ -206,7 +209,7 @@ export default function MarketCreatorManager() {
       // Add the active tree from market creator
       try {
         const umi = createUmi(connection.rpcEndpoint)
-        const treeAccount = await fetchMerkleTree(umi, activeTree)
+        const treeAccount = await fetchMerkleTree(umi, fromWeb3JsPublicKey(activeTree))
         
         // Find associated collection (the active collection should match)
         const associatedCollection = collectionsList.find(c => c.isActive)?.address
@@ -416,7 +419,7 @@ export default function MarketCreatorManager() {
         <div className="text-center space-y-4">
           <p className="text-slate-300 mb-4">Please connect your wallet to view your market creator.</p>
           <div className="flex justify-center">
-            <WalletMultiButton className="!bg-[#affc40] !text-slate-950 hover:!bg-[#affc40]/90" />
+            <WalletButton className="bg-[#affc40] text-slate-950 hover:bg-[#affc40]/90" />
           </div>
         </div>
       </div>
@@ -439,10 +442,10 @@ export default function MarketCreatorManager() {
       <div className="p-6 bg-slate-900/60 border border-[#affc40]/25 rounded-2xl backdrop-blur-sm">
         <p className="text-slate-300 mb-4">No market creator found for this wallet.</p>
         <Link
-          href="/signup"
+          href="/creator"
           className="inline-flex items-center gap-2 px-4 py-2 bg-[#affc40] text-slate-950 font-semibold rounded-lg hover:bg-[#affc40]/90 transition-colors"
         >
-          Create Market Creator
+          Open Creator Console
         </Link>
       </div>
     )
@@ -458,7 +461,7 @@ export default function MarketCreatorManager() {
             <div className="font-mono text-sm text-[#affc40]">{publicKey.toBase58()}</div>
           </div>
           <div className="flex items-center gap-3">
-            <WalletMultiButton className="!bg-[#affc40] !text-slate-950 hover:!bg-[#affc40]/90" />
+            <WalletButton className="bg-[#affc40] text-slate-950 hover:bg-[#affc40]/90" />
             <button
               onClick={() => disconnect()}
               className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg flex items-center gap-2 transition-colors text-sm"
@@ -657,7 +660,7 @@ export default function MarketCreatorManager() {
                         setEditing(false)
                         setEditForm({
                           feeVault: marketCreatorInfo.feeVault.toBase58(),
-                          creatorFeeBps: marketCreatorInfo.creatorFeeBps,
+                          creatorFeePercent: marketCreatorInfo.creatorFeeBps / 100,
                         })
                       }}
                       className="px-4 py-2 bg-slate-700 text-white font-semibold rounded-lg hover:bg-slate-600 transition-colors"

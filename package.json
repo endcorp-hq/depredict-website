@@ -23,7 +23,7 @@
   "private": true,
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
-    "@endcorp/depredict": "^0.7.2",
+    "@endcorp/depredict": "^0.7.12",
     "@gillsdk/react": "^0.6.0",
     "@metaplex-foundation/digital-asset-standard-api": "^2.0.0",
     "@metaplex-foundation/mpl-bubblegum": "^5.0.2",
@@ -57,6 +57,7 @@
     "next": "15.5.9",
     "next-themes": "^0.4.6",
     "npm": "^11.6.2",
+    "pino-pretty": "^10.3.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-error-boundary": "^6.0.0",
@@ -67,6 +68,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",
     "@tailwindcss/postcss": "^4.1.13",
+    "@types/bs58": "^4.0.0",
     "@types/bn.js": "^5.2.0",
     "@types/node": "^24.5.2",
     "@types/react": "^19.1.13",
@@ -78,5 +80,5 @@
     "typescript": "^5.9.2",
     "ws": "^8.18.3"
   },
-  "packageManager": "pnpm@10.19.0+sha512.c9fc7236e92adf5c8af42fd5bf1612df99c2ceb62f27047032f4720b33f8eacdde311865e91c411f2774f618d82f320808ecb51718bfa82c060c4ba7c76a32b8"
+  "packageManager": "pnpm@10.28.1+sha512.7d7dbbca9e99447b7c3bf7a73286afaaf6be99251eb9498baefa7d406892f67b879adb3a1d7e687fc4ccc1a388c7175fbaae567a26ab44d1067b54fcb0d6a316"
 }

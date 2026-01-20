@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useWallet, useConnection } from '@solana/wallet-adapter-react'
 import { PublicKey, Transaction } from '@solana/web3.js'
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
+import WalletButton from '@/components/wallet-button'
 import DepredictClient from '@endcorp/depredict'
 import { CheckCircle2, Loader2, Copy, Download, AlertCircle, CheckCircle, Network, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
@@ -92,7 +92,17 @@ const matchTreeOptionByCapacity = (capacity?: number) => {
 const getNetworkLabel = (target: WalletAdapterNetwork) =>
   target === WalletAdapterNetwork.Mainnet ? 'Mainnet' : 'Devnet'
 
-type SetupStep = 'network' | 'connect' | 'create' | 'collection' | 'tree' | 'verify' | 'validate' | 'complete'
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const DEFAULT_FORM_DATA = {
+  name: '',
+  feeVault: '',
+  creatorFeePercent: 1.0, // Store as percentage (1.0 = 1%)
+  collectionName: '',
+  collectionUri: '',
+}
+
+type SetupStep = 'network' | 'connect' | 'create' | 'verify' | 'validate' | 'complete'
 
 interface SetupState {
   step: SetupStep
@@ -101,6 +111,7 @@ interface SetupState {
   merkleTree?: PublicKey
   verified: boolean
   error?: string
+  notice?: string
   networkReady: boolean
   loading: boolean
   txSignatures?: {
@@ -139,23 +150,19 @@ interface SetupState {
   }
 }
 
-export default function MarketCreatorSetup() {
+export default function MarketCreatorSetup({ embedded = false }: { embedded?: boolean }) {
   const { publicKey, signTransaction, signAllTransactions, signMessage, connected, disconnect } = useWallet()
   const { connection } = useConnection()
   const { network, setNetwork } = useSolanaNetwork()
+  const previousWalletRef = useRef<string | null>(null)
   const [setupState, setSetupState] = useState<SetupState>({
     step: 'network',
     verified: false,
     networkReady: false,
     loading: false,
+    notice: undefined,
   })
-  const [formData, setFormData] = useState({
-    name: '',
-    feeVault: '',
-    creatorFeePercent: 1.0, // Store as percentage (1.0 = 1%)
-    collectionName: '',
-    collectionUri: '',
-  })
+  const [formData, setFormData] = useState(DEFAULT_FORM_DATA)
   const [selectedTreeOptionId, setSelectedTreeOptionId] = useState<string>(TREE_OPTIONS[1].id)
   const selectedTreeOption = TREE_OPTIONS.find((option) => option.id === selectedTreeOptionId) ?? TREE_OPTIONS[1]
 
@@ -283,6 +290,24 @@ export default function MarketCreatorSetup() {
     selectedTreeOption,
   ])
 
+  const waitForAccountInfo = useCallback(
+    async (pubkey: PublicKey, retries = 25, delayMs = 2000) => {
+      for (let attempt = 0; attempt < retries; attempt += 1) {
+        try {
+          const info = await connection.getAccountInfo(pubkey)
+          if (info && info.data.length > 0) {
+            return true
+          }
+        } catch {
+          // Retry on transient RPC errors.
+        }
+        await sleep(delayMs)
+      }
+      return false
+    },
+    [connection]
+  )
+
 
   const checkNetwork = useCallback(async () => {
     try {
@@ -330,13 +355,53 @@ export default function MarketCreatorSetup() {
       try {
         const marketCreator = await client.program.account.marketCreator.fetch(marketCreatorPDA)
 
+        let coreCollection: PublicKey | undefined = marketCreator.coreCollection
+        let merkleTree: PublicKey | undefined = marketCreator.merkleTree
+        let collectionExists = false
+        let treeExists = false
+        let mismatchMessage: string | undefined
+
+        if (coreCollection && !coreCollection.equals(PublicKey.default)) {
+          try {
+            const collectionInfo = await connection.getAccountInfo(coreCollection)
+            collectionExists = !!collectionInfo && collectionInfo.data.length > 0
+          } catch {
+            collectionExists = false
+          }
+          if (!collectionExists) {
+            mismatchMessage = `Collection account ${coreCollection.toBase58()} was not found. Please create a new collection.`
+            coreCollection = undefined
+          }
+        } else {
+          coreCollection = undefined
+        }
+
+        if (merkleTree && !merkleTree.equals(PublicKey.default)) {
+          try {
+            const treeInfo = await connection.getAccountInfo(merkleTree)
+            treeExists = !!treeInfo && treeInfo.data.length > 0
+          } catch {
+            treeExists = false
+          }
+          if (!treeExists) {
+            mismatchMessage = `Merkle tree ${merkleTree.toBase58()} was not found. Please create a new tree.`
+            merkleTree = undefined
+          }
+        } else {
+          merkleTree = undefined
+        }
+
+        const verified = marketCreator.verified && !!coreCollection && !!merkleTree
+
         // If market creator exists, pre-populate state
         setSetupState((prev) => ({
           ...prev,
           marketCreator: marketCreatorPDA,
-          coreCollection: marketCreator.coreCollection,
-          merkleTree: marketCreator.merkleTree,
-          verified: marketCreator.verified,
+          coreCollection,
+          merkleTree,
+          verified,
+          error: mismatchMessage ?? prev.error,
+          notice: undefined,
         }))
         setFormData((prev) => ({
           ...prev,
@@ -346,13 +411,7 @@ export default function MarketCreatorSetup() {
         }))
 
         // If verified (has collection), jump directly to complete step with config
-        if (
-          marketCreator.verified &&
-          marketCreator.coreCollection &&
-          !marketCreator.coreCollection.equals(PublicKey.default) &&
-          marketCreator.merkleTree &&
-          !marketCreator.merkleTree.equals(PublicKey.default)
-        ) {
+        if (verified && coreCollection && merkleTree) {
           // Load the complete configuration and go directly to complete step
           const config = await buildConfig(marketCreator, marketCreatorPDA)
 
@@ -362,24 +421,15 @@ export default function MarketCreatorSetup() {
             config,
             verified: true,
           }))
-        } else if (marketCreator.coreCollection && !marketCreator.coreCollection.equals(PublicKey.default)) {
-          if (marketCreator.merkleTree && !marketCreator.merkleTree.equals(PublicKey.default)) {
-            setSetupState((prev) => ({
-              ...prev,
-              step: 'verify',
-            }))
-          } else {
-            // Has collection, go to tree step
-            setSetupState((prev) => ({
-              ...prev,
-              step: 'tree',
-            }))
-          }
-        } else {
-          // Has market creator but no collection, go to collection step
+        } else if (coreCollection && merkleTree) {
           setSetupState((prev) => ({
             ...prev,
-            step: 'collection',
+            step: 'verify',
+          }))
+        } else {
+          setSetupState((prev) => ({
+            ...prev,
+            step: 'create',
           }))
         }
       } catch {
@@ -391,26 +441,40 @@ export default function MarketCreatorSetup() {
   }, [buildConfig, connection, publicKey])
 
   useEffect(() => {
-    if (!connection || setupState.step === 'network') return
+    if (!connection || setupState.step === 'network' || setupState.loading) return
 
     const runChecks = async () => {
       const networkReady = await checkNetwork()
-      if (networkReady && publicKey) {
+      if (networkReady && publicKey && (setupState.step === 'connect' || setupState.step === 'create')) {
         await checkExistingMarketCreator()
       }
     }
 
     void runChecks()
-  }, [checkExistingMarketCreator, checkNetwork, connection, publicKey, setupState.step])
+  }, [checkExistingMarketCreator, checkNetwork, connection, publicKey, setupState.loading, setupState.step])
 
-  const resetSetupState = (nextStep: SetupStep) => {
+  const resetSetupState = useCallback((nextStep: SetupStep) => {
     setSetupState({
       step: nextStep,
       verified: false,
       networkReady: false,
       loading: false,
+      notice: undefined,
     })
-  }
+  }, [])
+
+  useEffect(() => {
+    const currentWallet = publicKey?.toBase58() ?? null
+    if (previousWalletRef.current && previousWalletRef.current !== currentWallet) {
+      resetSetupState('connect')
+      setFormData(DEFAULT_FORM_DATA)
+      setSelectedTreeOptionId(TREE_OPTIONS[1].id)
+    }
+    if (!previousWalletRef.current && currentWallet) {
+      resetSetupState('connect')
+    }
+    previousWalletRef.current = currentWallet
+  }, [publicKey, resetSetupState])
 
   const handleSelectNetwork = (choice: WalletAdapterNetwork) => {
     setNetwork(choice)
@@ -468,25 +532,15 @@ export default function MarketCreatorSetup() {
 
     if (!(await ensureNetworkReady())) return
 
-    if (!formData.name.trim()) {
-      setSetupState((prev) => ({ ...prev, error: 'Market creator name is required' }))
-      return
-    }
+    setSetupState((prev) => ({ ...prev, loading: true, error: undefined, notice: undefined }))
 
-    if (!formData.feeVault.trim()) {
-      setSetupState((prev) => ({ ...prev, error: 'Fee vault address is required' }))
-      return
+    const fail = (message: string) => {
+      setSetupState((prev) => ({
+        ...prev,
+        error: message,
+        loading: false,
+      }))
     }
-
-    let feeVaultPubkey: PublicKey
-    try {
-      feeVaultPubkey = new PublicKey(formData.feeVault)
-    } catch {
-      setSetupState((prev) => ({ ...prev, error: 'Invalid fee vault address' }))
-      return
-    }
-
-    setSetupState((prev) => ({ ...prev, loading: true, error: undefined }))
 
     try {
       const client = new DepredictClient(connection)
@@ -495,370 +549,286 @@ export default function MarketCreatorSetup() {
         PROGRAM_ID
       )
 
-      // Check if already exists
-      try {
-        const existing = await client.program.account.marketCreator.fetch(marketCreatorPDA)
-        if (existing) {
-          setSetupState((prev) => ({
-            ...prev,
-            step: 'collection',
-            marketCreator: marketCreatorPDA,
-            loading: false,
-          }))
-          return
-        }
-      } catch {
-        // Doesn't exist, continue
-      }
+      let marketCreator: any | undefined
+      let marketCreatorSig: string | undefined
 
-      // Convert percentage to basis points for on-chain
-      const creatorFeeBps = Math.round(formData.creatorFeePercent * 100)
-
-      // Validate fee range (0-20%) - matches on-chain MAX_FEE_AMOUNT = 2000 bps
-      if (creatorFeeBps < 0 || creatorFeeBps > 2000) {
-        setSetupState((prev) => ({
-          ...prev,
-          error: 'Creator fee must be between 0% and 20%',
-          loading: false,
-        }))
-        return
-      }
-
-      // Create market creator
-      const { ixs } = await client.marketCreator.createMarketCreator({
-        name: formData.name,
-        feeVault: feeVaultPubkey,
-        creatorFeeBps,
-        signer: publicKey,
-      })
-
-      const tx = new Transaction().add(...ixs)
-      tx.feePayer = publicKey
-      const { blockhash } = await connection.getLatestBlockhash('confirmed')
-      tx.recentBlockhash = blockhash
-
-      // Simulate transaction before signing (dry-run)
-      try {
-        const simulation = await connection.simulateTransaction(tx)
-        if (simulation.value.err) {
-          setSetupState((prev) => ({
-            ...prev,
-            error: `Transaction simulation failed: ${JSON.stringify(simulation.value.err)}. Please check your inputs and try again.`,
-            loading: false,
-          }))
-          return
-        }
-        console.log('Transaction simulation successful:', {
-          computeUnitsUsed: simulation.value.unitsConsumed,
-        })
-      } catch (simError) {
-        console.warn('Transaction simulation error:', simError)
-        setSetupState((prev) => ({
-          ...prev,
-          error: `Transaction simulation warning: ${simError instanceof Error ? simError.message : 'Unknown error'}. You can still proceed, but the transaction may fail.`,
-          loading: false,
-        }))
-        return
-      }
-
-      const signed = await signTransaction(tx)
-      const sig = await connection.sendRawTransaction(signed.serialize(), {
-        skipPreflight: false,
-      })
-
-      // Wait for confirmation and check for errors
-      const confirmation = await connection.confirmTransaction(sig, 'confirmed')
-      
-      if (confirmation.value.err) {
-        // Transaction failed - get more details
-        const txDetails = await connection.getTransaction(sig, {
-          commitment: 'confirmed',
-          maxSupportedTransactionVersion: 0,
-        })
-        
-        const errorMsg = txDetails?.meta?.err 
-          ? JSON.stringify(txDetails.meta.err)
-          : 'Transaction failed'
-        
-        setSetupState((prev) => ({
-          ...prev,
-          error: `Failed to create market creator: ${errorMsg}. Transaction: ${sig}`,
-          loading: false,
-        }))
-        return
-      }
-
-      // Verify the account was created
-      try {
-        const createdAccount = await client.program.account.marketCreator.fetch(marketCreatorPDA)
-        if (!createdAccount) {
-          throw new Error('Market creator account not found after creation')
-        }
-      } catch (err) {
-        setSetupState((prev) => ({
-          ...prev,
-          error: `Market creator transaction succeeded but account verification failed: ${err instanceof Error ? err.message : 'Unknown error'}. Transaction: ${sig}`,
-          loading: false,
-        }))
-        return
-      }
-
-      setSetupState((prev) => ({
-        ...prev,
-        step: 'collection',
-        marketCreator: marketCreatorPDA,
-        txSignatures: { ...prev.txSignatures, marketCreator: sig },
-        loading: false,
-      }))
-    } catch (error) {
-      setSetupState((prev) => ({
-        ...prev,
-        error: error instanceof Error ? error.message : 'Failed to create market creator',
-        loading: false,
-      }))
-    }
-  }
-
-  const handleCreateCollection = async () => {
-    if (!publicKey || !signTransaction) {
-      setSetupState((prev) => ({ ...prev, error: 'Wallet not connected' }))
-      return
-    }
-
-    if (!(await ensureNetworkReady())) return
-
-    if (!formData.collectionName.trim()) {
-      setSetupState((prev) => ({ ...prev, error: 'Collection name is required' }))
-      return
-    }
-
-    if (!formData.collectionUri.trim()) {
-      setSetupState((prev) => ({ ...prev, error: 'Collection metadata URI is required' }))
-      return
-    }
-
-    setSetupState((prev) => ({ ...prev, loading: true, error: undefined }))
-
-    try {
-      const client = new DepredictClient(connection)
-
-      // Check if collection already exists by checking market creator
-      const marketCreatorPDA = setupState.marketCreator || PublicKey.findProgramAddressSync(
-        [Buffer.from('market_creator'), publicKey.toBytes()],
-        PROGRAM_ID
-      )[0]
-      let marketCreator
       try {
         marketCreator = await client.program.account.marketCreator.fetch(marketCreatorPDA)
       } catch {
-        setSetupState((prev) => ({
-          ...prev,
-          error: 'Market creator account not found. Please create it first.',
-          loading: false,
-        }))
+        marketCreator = undefined
+      }
+
+      if (!marketCreator) {
+        if (!formData.name.trim()) {
+          fail('Market creator name is required')
+          return
+        }
+
+        if (!formData.feeVault.trim()) {
+          fail('Fee vault address is required')
+          return
+        }
+
+        let feeVaultPubkey: PublicKey
+        try {
+          feeVaultPubkey = new PublicKey(formData.feeVault)
+        } catch {
+          fail('Invalid fee vault address')
+          return
+        }
+
+        const creatorFeeBps = Math.round(formData.creatorFeePercent * 100)
+        if (creatorFeeBps < 0 || creatorFeeBps > 2000) {
+          fail('Creator fee must be between 0% and 20%')
+          return
+        }
+
+        const { ixs } = await client.marketCreator.createMarketCreator({
+          name: formData.name,
+          feeVault: feeVaultPubkey,
+          creatorFeeBps,
+          signer: publicKey,
+        })
+
+        const tx = new Transaction().add(...ixs)
+        tx.feePayer = publicKey
+        const { blockhash } = await connection.getLatestBlockhash('confirmed')
+        tx.recentBlockhash = blockhash
+
+        try {
+          const simulation = await connection.simulateTransaction(tx)
+          if (simulation.value.err) {
+            fail(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}. Please check your inputs.`)
+            return
+          }
+        } catch (simError) {
+          fail(`Transaction simulation warning: ${simError instanceof Error ? simError.message : 'Unknown error'}.`)
+          return
+        }
+
+        const signed = await signTransaction(tx)
+        const sig = await connection.sendRawTransaction(signed.serialize(), {
+          skipPreflight: false,
+        })
+
+        const latestBlockhash = await connection.getLatestBlockhash()
+        const confirmation = await connection.confirmTransaction({
+          signature: sig,
+          blockhash: latestBlockhash.blockhash,
+          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+        }, 'confirmed')
+        if (confirmation.value.err) {
+          const txDetails = await connection.getTransaction(sig, {
+            commitment: 'confirmed',
+            maxSupportedTransactionVersion: 0,
+          })
+
+          const errorMsg = txDetails?.meta?.err ? JSON.stringify(txDetails.meta.err) : 'Transaction failed'
+          fail(`Failed to create market creator: ${errorMsg}. Transaction: ${sig}`)
+          return
+        }
+
+        try {
+          marketCreator = await client.program.account.marketCreator.fetch(marketCreatorPDA)
+        } catch (err) {
+          fail(
+            `Market creator transaction succeeded but account verification failed: ${
+              err instanceof Error ? err.message : 'Unknown error'
+            }. Transaction: ${sig}`
+          )
+          return
+        }
+
+        marketCreatorSig = sig
+      }
+
+      if (!marketCreator) {
+        fail('Market creator account not found after creation.')
         return
       }
 
-      if (marketCreator.coreCollection && !marketCreator.coreCollection.equals(PublicKey.default)) {
+      const hasCollection =
+        marketCreator.coreCollection && !marketCreator.coreCollection.equals(PublicKey.default)
+      const hasTree = marketCreator.merkleTree && !marketCreator.merkleTree.equals(PublicKey.default)
+
+      if (marketCreator.verified && hasCollection && hasTree) {
+        const config = await buildConfig(marketCreator, marketCreatorPDA)
         setSetupState((prev) => ({
           ...prev,
-          step: 'tree',
+          step: 'complete',
+          marketCreator: marketCreatorPDA,
           coreCollection: marketCreator.coreCollection,
-          loading: false,
-        }))
-        return
-      }
-
-      const umi = getUmi()
-      if (!umi) {
-        setSetupState((prev) => ({
-          ...prev,
-          error: 'Wallet adapter not ready to sign transactions. Please reconnect your wallet.',
-          loading: false,
-        }))
-        return
-      }
-
-      const collectionSigner = generateSigner(umi)
-      const builder = createCollectionV2(umi, {
-        collection: collectionSigner,
-        updateAuthority: fromWeb3JsPublicKey(marketCreatorPDA),
-        name: formData.collectionName.trim(),
-        uri: formData.collectionUri.trim(),
-      })
-
-      const simulationOk = await simulateUmiBuilder(umi, builder, 'Collection simulation failed')
-      if (!simulationOk) return
-
-      const signedTx = await builder.buildAndSign(umi)
-      const web3Tx = toWeb3JsTransaction(signedTx)
-      const sig = await connection.sendRawTransaction(web3Tx.serialize(), {
-        skipPreflight: false,
-      })
-
-      const confirmation = await connection.confirmTransaction(sig, 'confirmed')
-      if (confirmation.value.err) {
-        setSetupState((prev) => ({
-          ...prev,
-          error: `Failed to create collection: ${JSON.stringify(confirmation.value.err)}. Transaction: ${sig}`,
-          loading: false,
-        }))
-        return
-      }
-
-      try {
-        await fetchCollectionV1(umi, collectionSigner.publicKey)
-      } catch (err) {
-        setSetupState((prev) => ({
-          ...prev,
-          error: `Collection created but could not be verified on-chain: ${
-            err instanceof Error ? err.message : 'Unknown error'
-          }. Transaction: ${sig}`,
-          loading: false,
-        }))
-        return
-      }
-
-      setSetupState((prev) => ({
-        ...prev,
-        step: 'tree',
-        coreCollection: new PublicKey(collectionSigner.publicKey),
-        txSignatures: { ...prev.txSignatures, collection: sig },
-        loading: false,
-      }))
-    } catch (error) {
-      setSetupState((prev) => ({
-        ...prev,
-        error: error instanceof Error ? error.message : 'Failed to create collection',
-        loading: false,
-      }))
-    }
-  }
-
-  const handleCreateTree = async () => {
-    if (!publicKey || !signTransaction) {
-      setSetupState((prev) => ({ ...prev, error: 'Wallet not connected' }))
-      return
-    }
-
-    if (!(await ensureNetworkReady())) return
-
-    if (!selectedTreeOption) {
-      setSetupState((prev) => ({ ...prev, error: 'Please select a tree size option' }))
-      return
-    }
-
-    setSetupState((prev) => ({ ...prev, loading: true, error: undefined }))
-
-    try {
-      const client = new DepredictClient(connection)
-      const marketCreatorPDA = setupState.marketCreator || PublicKey.findProgramAddressSync(
-        [Buffer.from('market_creator'), publicKey.toBytes()],
-        PROGRAM_ID
-      )[0]
-
-      let marketCreator
-      try {
-        marketCreator = await client.program.account.marketCreator.fetch(marketCreatorPDA)
-      } catch {
-        setSetupState((prev) => ({
-          ...prev,
-          error: 'Market creator account not found. Please create it first.',
-          loading: false,
-        }))
-        return
-      }
-
-      // Check if tree already exists
-      if (marketCreator.merkleTree && !marketCreator.merkleTree.equals(PublicKey.default)) {
-        setSetupState((prev) => ({
-          ...prev,
-          step: 'verify',
           merkleTree: marketCreator.merkleTree,
+          verified: true,
+          config,
+          txSignatures: {
+            ...prev.txSignatures,
+            ...(marketCreatorSig ? { marketCreator: marketCreatorSig } : {}),
+          },
           loading: false,
         }))
         return
       }
 
-      const umi = getUmi()
-      if (!umi) {
-        setSetupState((prev) => ({
-          ...prev,
-          error: 'Wallet adapter not ready to sign transactions. Please reconnect your wallet.',
-          loading: false,
-        }))
-        return
+      const noticeMessages: string[] = []
+      let coreCollection: PublicKey | undefined
+      let collectionSig: string | undefined
+
+      if (hasCollection) {
+        coreCollection = marketCreator.coreCollection
+        if (coreCollection) {
+          const collectionReady = await waitForAccountInfo(coreCollection, 8, 1500)
+          if (!collectionReady) {
+            noticeMessages.push(
+              'Existing collection is still indexing on RPC. We will continue and re-check during verification.'
+            )
+          }
+        }
       }
 
-      const merkleTreeSigner = generateSigner(umi)
-      const treeBuilder = await createTreeV2(umi, {
-        merkleTree: merkleTreeSigner,
-        maxDepth: selectedTreeOption.treeDepth,
-        maxBufferSize: selectedTreeOption.concurrencyBuffer,
-        canopyDepth: selectedTreeOption.canopyDepth,
-        public: false,
-      })
-      const delegateBuilder = setTreeDelegate(umi, {
-        merkleTree: merkleTreeSigner.publicKey,
-        newTreeDelegate: fromWeb3JsPublicKey(marketCreatorPDA),
-      })
-      const builder = treeBuilder.add(delegateBuilder)
-
-      const simulationOk = await simulateUmiBuilder(umi, builder, 'Tree simulation failed')
-      if (!simulationOk) return
-
-      const signedTx = await builder.buildAndSign(umi)
-      const web3Tx = toWeb3JsTransaction(signedTx)
-      const sig = await connection.sendRawTransaction(web3Tx.serialize(), {
-        skipPreflight: false,
-      })
-
-      const confirmation = await connection.confirmTransaction(sig, 'confirmed')
-      if (confirmation.value.err) {
-        setSetupState((prev) => ({
-          ...prev,
-          error: `Failed to create merkle tree: ${JSON.stringify(confirmation.value.err)}. Transaction: ${sig}`,
-          loading: false,
-        }))
-        return
-      }
-
-      try {
-        const treeConfig = await fetchTreeConfigFromSeeds(umi, {
-          merkleTree: merkleTreeSigner.publicKey,
-        })
-        if (treeConfig.treeDelegate.toString() !== marketCreatorPDA.toBase58()) {
-          setSetupState((prev) => ({
-            ...prev,
-            error: `Merkle tree delegate mismatch. Expected ${marketCreatorPDA.toBase58()} but found ${treeConfig.treeDelegate.toString()}.`,
-            loading: false,
-          }))
+      if (!coreCollection) {
+        if (!formData.collectionName.trim()) {
+          fail('Collection name is required')
           return
         }
-      } catch (err) {
-        setSetupState((prev) => ({
-          ...prev,
-          error: `Merkle tree created but could not be verified on-chain: ${
-            err instanceof Error ? err.message : 'Unknown error'
-          }. Transaction: ${sig}`,
-          loading: false,
-        }))
-        return
+
+        if (!formData.collectionUri.trim()) {
+          fail('Collection metadata URI is required')
+          return
+        }
+
+        const umi = getUmi()
+        if (!umi) {
+          fail('Wallet adapter not ready to sign transactions. Please reconnect your wallet.')
+          return
+        }
+
+        const collectionSigner = generateSigner(umi)
+        const builder = createCollectionV2(umi, {
+          collection: collectionSigner,
+          updateAuthority: fromWeb3JsPublicKey(marketCreatorPDA),
+          name: formData.collectionName.trim(),
+          uri: formData.collectionUri.trim(),
+        })
+
+        const simulationOk = await simulateUmiBuilder(umi, builder, 'Collection simulation failed')
+        if (!simulationOk) return
+
+        const signedTx = await builder.buildAndSign(umi)
+        const web3Tx = toWeb3JsTransaction(signedTx)
+        const sig = await connection.sendRawTransaction(web3Tx.serialize(), {
+          skipPreflight: false,
+        })
+
+        const latestBlockhash = await connection.getLatestBlockhash()
+        const confirmation = await connection.confirmTransaction({
+          signature: sig,
+          blockhash: latestBlockhash.blockhash,
+          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+        }, 'confirmed')
+        if (confirmation.value.err) {
+          fail(`Failed to create collection: ${JSON.stringify(confirmation.value.err)}. Transaction: ${sig}`)
+          return
+        }
+
+        coreCollection = new PublicKey(collectionSigner.publicKey)
+        const collectionReady = await waitForAccountInfo(coreCollection)
+        if (!collectionReady) {
+          noticeMessages.push(
+            `Collection transaction confirmed. Indexing can take a minute. Transaction: ${sig}`
+          )
+        }
+        collectionSig = sig
+      }
+
+      let merkleTree: PublicKey | undefined
+      let treeSig: string | undefined
+
+      if (hasTree) {
+        merkleTree = marketCreator.merkleTree
+        if (merkleTree) {
+          const treeReady = await waitForAccountInfo(merkleTree, 8, 1500)
+          if (!treeReady) {
+            noticeMessages.push(
+              'Existing merkle tree is still indexing on RPC. We will continue and re-check during verification.'
+            )
+          }
+        }
+      }
+
+      if (!merkleTree) {
+        if (!selectedTreeOption) {
+          fail('Please select a tree size option')
+          return
+        }
+
+        const umi = getUmi()
+        if (!umi) {
+          fail('Wallet adapter not ready to sign transactions. Please reconnect your wallet.')
+          return
+        }
+
+        const merkleTreeSigner = generateSigner(umi)
+        const treeBuilder = await createTreeV2(umi, {
+          merkleTree: merkleTreeSigner,
+          maxDepth: selectedTreeOption.treeDepth,
+          maxBufferSize: selectedTreeOption.concurrencyBuffer,
+          canopyDepth: selectedTreeOption.canopyDepth,
+          public: false,
+        })
+        const delegateBuilder = setTreeDelegate(umi, {
+          merkleTree: merkleTreeSigner.publicKey,
+          newTreeDelegate: fromWeb3JsPublicKey(marketCreatorPDA),
+        })
+        const builder = treeBuilder.add(delegateBuilder)
+
+        const simulationOk = await simulateUmiBuilder(umi, builder, 'Tree simulation failed')
+        if (!simulationOk) return
+
+        const signedTx = await builder.buildAndSign(umi)
+        const web3Tx = toWeb3JsTransaction(signedTx)
+        const sig = await connection.sendRawTransaction(web3Tx.serialize(), {
+          skipPreflight: false,
+        })
+
+        const latestBlockhash = await connection.getLatestBlockhash()
+        const confirmation = await connection.confirmTransaction({
+          signature: sig,
+          blockhash: latestBlockhash.blockhash,
+          lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+        }, 'confirmed')
+        if (confirmation.value.err) {
+          fail(`Failed to create merkle tree: ${JSON.stringify(confirmation.value.err)}. Transaction: ${sig}`)
+          return
+        }
+
+        merkleTree = new PublicKey(merkleTreeSigner.publicKey)
+        const treeReady = await waitForAccountInfo(merkleTree)
+        if (!treeReady) {
+          noticeMessages.push(
+            `Merkle tree transaction confirmed. Indexing can take a minute. Transaction: ${sig}`
+          )
+        }
+        treeSig = sig
       }
 
       setSetupState((prev) => ({
         ...prev,
         step: 'verify',
-        merkleTree: new PublicKey(merkleTreeSigner.publicKey),
-        txSignatures: { ...prev.txSignatures, tree: sig },
+        marketCreator: marketCreatorPDA,
+        coreCollection,
+        merkleTree,
+        txSignatures: {
+          ...prev.txSignatures,
+          ...(marketCreatorSig ? { marketCreator: marketCreatorSig } : {}),
+          ...(collectionSig ? { collection: collectionSig } : {}),
+          ...(treeSig ? { tree: treeSig } : {}),
+        },
+        notice: noticeMessages.length ? noticeMessages.join(' ') : undefined,
         loading: false,
       }))
     } catch (error) {
-      setSetupState((prev) => ({
-        ...prev,
-        error: error instanceof Error ? error.message : 'Failed to create merkle tree',
-        loading: false,
-      }))
+      fail(error instanceof Error ? error.message : 'Failed to run setup')
     }
   }
 
@@ -872,7 +842,7 @@ export default function MarketCreatorSetup() {
 
     if (!(await ensureNetworkReady())) return
 
-    setSetupState((prev) => ({ ...prev, loading: true, error: undefined }))
+    setSetupState((prev) => ({ ...prev, loading: true, error: undefined, notice: undefined }))
 
     try {
       const client = new DepredictClient(connection)
@@ -987,7 +957,12 @@ export default function MarketCreatorSetup() {
       })
 
       // Wait for confirmation and check for errors
-      const confirmation = await connection.confirmTransaction(sig, 'confirmed')
+      const latestBlockhash = await connection.getLatestBlockhash()
+      const confirmation = await connection.confirmTransaction({
+        signature: sig,
+        blockhash: latestBlockhash.blockhash,
+        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+      }, 'confirmed')
       
       if (confirmation.value.err) {
         // Transaction failed - get more details
@@ -1044,7 +1019,7 @@ export default function MarketCreatorSetup() {
 
     if (!(await ensureNetworkReady())) return
 
-    setSetupState((prev) => ({ ...prev, loading: true, error: undefined }))
+    setSetupState((prev) => ({ ...prev, loading: true, error: undefined, notice: undefined }))
 
     try {
       const client = new DepredictClient(connection)
@@ -1170,9 +1145,11 @@ export default function MarketCreatorSetup() {
   const steps: { key: SetupStep; label: string; description: string }[] = [
     { key: 'network', label: 'Network', description: 'Choose devnet or mainnet' },
     { key: 'connect', label: 'Connect Wallet', description: 'Connect your Solana wallet' },
-    { key: 'create', label: 'Create Market Creator', description: 'Create your market creator account' },
-    { key: 'collection', label: 'Create Collection', description: 'Create MPL Core collection' },
-    { key: 'tree', label: 'Create Merkle Tree', description: 'Create merkle tree for compressed NFTs' },
+    {
+      key: 'create',
+      label: 'Setup Accounts',
+      description: 'Create market creator, collection, and merkle tree',
+    },
     { key: 'verify', label: 'Verify', description: 'Verify market creator with collection and tree' },
     { key: 'validate', label: 'Validate', description: 'Validate your setup' },
     { key: 'complete', label: 'Complete', description: 'Setup complete!' },
@@ -1181,17 +1158,27 @@ export default function MarketCreatorSetup() {
   const currentStepIndex = steps.findIndex((s) => s.key === setupState.step)
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-[#affc40]/10 text-white">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div
+      className={
+        embedded
+          ? 'text-white'
+          : 'min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-[#affc40]/10 text-white'
+      }
+    >
+      <div className={`${embedded ? 'max-w-6xl' : 'max-w-4xl'} mx-auto px-4 sm:px-6 lg:px-8 ${embedded ? 'py-6' : 'py-12'}`}>
         <div className="mb-8">
-          <Link href="/" className="text-[#affc40] hover:text-[#affc40]/80 text-sm mb-4 inline-block">
-            ← Back to home
-          </Link>
+          {!embedded && (
+            <Link href="/" className="text-[#affc40] hover:text-[#affc40]/80 text-sm mb-4 inline-block">
+              ← Back to home
+            </Link>
+          )}
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-4xl font-bold mb-2">Sign Up as Market Creator</h1>
-              <p className="text-slate-300">
-                Complete the setup to start creating prediction markets on dePredict
+              <h1 className={`${embedded ? 'text-2xl' : 'text-4xl'} font-bold mb-2`}>
+                Sign Up as Market Creator
+              </h1>
+              <p className={`${embedded ? 'text-sm text-slate-300' : 'text-slate-300'}`}>
+                Complete setup and start launching markets fast.
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -1256,6 +1243,15 @@ export default function MarketCreatorSetup() {
 
         {/* Main Content */}
         <div className="bg-slate-900/60 border border-[#affc40]/25 rounded-2xl p-8 backdrop-blur-sm">
+          {setupState.notice && (
+            <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/50 rounded-lg flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-blue-300 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="font-semibold text-blue-200 mb-1">Notice</div>
+                <div className="text-sm text-blue-100">{setupState.notice}</div>
+              </div>
+            </div>
+          )}
           {setupState.error && (
             <div className="mb-6 p-4 bg-red-500/10 border border-red-500/50 rounded-lg flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
@@ -1271,8 +1267,7 @@ export default function MarketCreatorSetup() {
               <div>
                 <h2 className="text-2xl font-semibold mb-2">Choose Network</h2>
                 <p className="text-slate-300 mb-6">
-                  Select the network where you want to operate. All accounts created in this wizard are scoped to
-                  that network and cannot be moved later.
+                  Pick the network you will operate on. Accounts created here stay on that network.
                 </p>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <button
@@ -1282,7 +1277,7 @@ export default function MarketCreatorSetup() {
                   >
                     <div className="text-lg font-semibold text-white mb-1">Devnet</div>
                     <div className="text-sm text-slate-300">
-                      Free SOL via faucet. Ideal for testing and staging.
+                      Free SOL via faucet. Best for testing.
                     </div>
                   </button>
                   <button
@@ -1292,13 +1287,12 @@ export default function MarketCreatorSetup() {
                   >
                     <div className="text-lg font-semibold text-white mb-1">Mainnet</div>
                     <div className="text-sm text-slate-300">
-                      Real SOL costs. Use for production market creation.
+                      Real SOL costs. Use for production.
                     </div>
                   </button>
                 </div>
                 <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/50 rounded-lg text-sm text-blue-200">
-                  You will be asked to connect your wallet after selecting a network. Ensure your wallet is set to
-                  the same cluster to avoid failed transactions.
+                  Next, connect your wallet. Make sure it matches this network to avoid failures.
                 </div>
               </div>
             </div>
@@ -1309,10 +1303,10 @@ export default function MarketCreatorSetup() {
               <div>
                 <h2 className="text-2xl font-semibold mb-2">Connect Your Wallet</h2>
                 <p className="text-slate-300 mb-6">
-                  Connect your Solana wallet to begin the market creator setup process.
+                  Connect your wallet to start setup.
                 </p>
                 <div className="flex justify-center">
-                  <WalletMultiButton className="!bg-[#affc40] !text-slate-950 hover:!bg-[#affc40]/90" />
+                  <WalletButton className="bg-[#affc40] text-slate-950 hover:bg-[#affc40]/90" />
                 </div>
                 {!setupState.networkReady && !setupState.error && (
                   <div className="mt-4 text-sm text-slate-400 text-center">
@@ -1341,70 +1335,153 @@ export default function MarketCreatorSetup() {
           {setupState.step === 'create' && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-semibold mb-2">Create Market Creator Account</h2>
+                <h2 className="text-2xl font-semibold mb-2">One-Click Setup</h2>
                 <p className="text-slate-300 mb-6">
-                  Create your market creator account. This will be your identity on the dePredict protocol and will
-                  require a small network fee for rent.
+                  We will create your market creator, collection, and merkle tree in one flow. You will sign up to 3 transactions.
                 </p>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Market Creator Name
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.name}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
-                      placeholder="My Market Platform"
-                      className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-[#affc40]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Fee Vault Address
-                    </label>
-                    <input
-                      type="text"
-                      value={formData.feeVault}
-                      onChange={(e) => setFormData((prev) => ({ ...prev, feeVault: e.target.value }))}
-                      placeholder="Enter fee vault public key"
-                      className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-[#affc40] font-mono text-sm"
-                    />
-                    {publicKey && (
-                      <button
-                        type="button"
-                        onClick={() => setFormData((prev) => ({ ...prev, feeVault: publicKey.toBase58() }))}
-                        className="mt-2 text-xs text-[#affc40] hover:text-[#affc40]/80 transition-colors"
-                      >
-                        Use my wallet address
-                      </button>
-                    )}
-                    <p className="mt-2 text-xs text-slate-400">
-                      This is the address that will receive your market creator fees. You can update it later.
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-2">
-                      Creator Fee (%)
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={formData.creatorFeePercent}
-                        onChange={(e) => {
-                          const value = parseFloat(e.target.value) || 0
-                          setFormData((prev) => ({ ...prev, creatorFeePercent: value }))
-                        }}
-                      min="0"
-                      max="20"
-                      className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-[#affc40]"
-                    />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">%</span>
+                <div className="space-y-4 mb-6">
+                  {setupState.marketCreator && (
+                    <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-lg text-sm text-slate-300">
+                      Existing market creator detected. We will reuse it.
                     </div>
-                    <p className="mt-2 text-xs text-slate-400">
-                      Fee percentage (0% to 20%, e.g., 0.5% = 0.5, 5% = 5)
-                    </p>
+                  )}
+                  {setupState.coreCollection && (
+                    <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-lg text-sm text-slate-300">
+                      Existing collection detected. We will reuse it.
+                    </div>
+                  )}
+                  {setupState.merkleTree && (
+                    <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-lg text-sm text-slate-300">
+                      Existing merkle tree detected. We will reuse it.
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-6">
+                  <div className="grid gap-6 md:grid-cols-2">
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                          Market Creator Name
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.name}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
+                          placeholder="My Market Platform"
+                          className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-[#affc40]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                          Fee Vault Address
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.feeVault}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, feeVault: e.target.value }))}
+                          placeholder="Enter fee vault public key"
+                          className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-[#affc40] font-mono text-sm"
+                        />
+                        {publicKey && (
+                          <button
+                            type="button"
+                            onClick={() => setFormData((prev) => ({ ...prev, feeVault: publicKey.toBase58() }))}
+                            className="mt-2 text-xs text-[#affc40] hover:text-[#affc40]/80 transition-colors"
+                          >
+                            Use my wallet address
+                          </button>
+                        )}
+                        <p className="mt-2 text-xs text-slate-400">
+                          Receives creator fees. You can update this later.
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                          Creator Fee (%)
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={formData.creatorFeePercent}
+                            onChange={(e) => {
+                              const value = parseFloat(e.target.value) || 0
+                              setFormData((prev) => ({ ...prev, creatorFeePercent: value }))
+                            }}
+                            min="0"
+                            max="20"
+                            className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-[#affc40]"
+                          />
+                          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">%</span>
+                        </div>
+                        <p className="mt-2 text-xs text-slate-400">
+                          0% to 20% (example: 0.5 or 5).
+                        </p>
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                          Collection Name
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.collectionName}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, collectionName: e.target.value }))}
+                          placeholder="My Market Collection"
+                          className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-[#affc40]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                          Metadata URI
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.collectionUri}
+                          onChange={(e) => setFormData((prev) => ({ ...prev, collectionUri: e.target.value }))}
+                          placeholder="https://.../collection.json"
+                          className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-[#affc40] font-mono text-sm"
+                        />
+                        <p className="mt-2 text-xs text-slate-400">
+                          URL to a JSON metadata file (IPFS, Arweave, GitHub raw, or your host).
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="text-sm font-medium text-slate-300">Merkle Tree Size</div>
+                    {TREE_OPTIONS.map((option) => {
+                      const selected = option.id === selectedTreeOptionId
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => setSelectedTreeOptionId(option.id)}
+                          className={`w-full text-left p-4 rounded-xl border transition-colors ${
+                            selected
+                              ? 'border-[#affc40] bg-[#affc40]/10'
+                              : 'border-slate-700 bg-slate-800/40 hover:border-[#affc40]/60'
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="text-sm text-slate-400">Number of cNFTs</div>
+                              <div className="text-lg font-semibold text-white">{formatNumber(option.cnftCount)}</div>
+                            </div>
+                            <div className="text-sm text-slate-300">
+                              Depth {option.treeDepth} | Canopy {option.canopyDepth} | Buffer {option.concurrencyBuffer}
+                            </div>
+                          </div>
+                          <div className="mt-2 text-xs text-slate-400">
+                            Tree cost {formatSol(option.treeCostSol)} SOL | {option.costPerCnft.toFixed(8)} SOL per cNFT
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="p-4 bg-blue-500/10 border border-blue-500/50 rounded-lg text-sm text-blue-200">
+                    Estimated tree rent: {formatSol(selectedTreeOption.treeCostSol)} SOL. Collection rent is additional.
                   </div>
                   <button
                     onClick={handleCreateMarketCreator}
@@ -1414,204 +1491,13 @@ export default function MarketCreatorSetup() {
                     {setupState.loading ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        Creating...
+                        Running setup...
                       </>
                     ) : (
-                      'Create Market Creator'
+                      'Run Setup'
                     )}
                   </button>
                 </div>
-              </div>
-            </div>
-          )}
-
-          {setupState.step === 'collection' && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-2xl font-semibold mb-2">Create MPL Core Collection</h2>
-                <p className="text-slate-300 mb-6">
-                  Create a Metaplex Core collection for your market creator. A one-time collection key is generated
-                  locally in your browser to create the account. It is never stored or uploaded, and your wallet will
-                  be the only authority after creation.
-                </p>
-                {setupState.txSignatures?.marketCreator && (
-                  <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-lg mb-6">
-                    <div className="text-sm text-slate-300">
-                      Market creator created successfully.
-                    </div>
-                    <div className="text-xs text-slate-400 mt-1 break-all">
-                      Transaction: {setupState.txSignatures.marketCreator}
-                    </div>
-                  </div>
-                )}
-                {setupState.coreCollection && (
-                  <div className="p-4 bg-[#affc40]/10 border border-[#affc40]/50 rounded-lg mb-6">
-                    <div className="flex items-start gap-3">
-                      <CheckCircle className="w-5 h-5 text-[#affc40] flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <div className="font-semibold text-[#affc40] mb-2">Collection Created Successfully!</div>
-                        <div className="text-sm text-slate-300">
-                          Your collection has been created. All addresses and important information will be shown at the end of the setup process.
-                        </div>
-                        {setupState.txSignatures?.collection && (
-                          <div className="text-xs text-slate-400 mt-2 break-all">
-                            Transaction: {setupState.txSignatures.collection}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {!setupState.coreCollection && (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-slate-300 mb-2">
-                        Collection Name
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.collectionName}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, collectionName: e.target.value }))}
-                        placeholder="My Market Collection"
-                        className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-[#affc40]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-300 mb-2">
-                        Metadata URI
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.collectionUri}
-                        onChange={(e) => setFormData((prev) => ({ ...prev, collectionUri: e.target.value }))}
-                        placeholder="https://.../collection.json"
-                        className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-[#affc40] font-mono text-sm"
-                      />
-                      <p className="mt-2 text-xs text-slate-400">
-                        Provide a URL to a JSON metadata file (IPFS, Arweave, GitHub raw, or your own host).
-                      </p>
-                    </div>
-                    <div className="p-4 bg-blue-500/10 border border-blue-500/50 rounded-lg text-sm text-blue-200">
-                      Collection creation costs rent on-chain. Make sure your wallet has enough SOL to cover setup.
-                    </div>
-                    <button
-                      onClick={handleCreateCollection}
-                      disabled={setupState.loading || !setupState.networkReady}
-                      className="w-full px-6 py-3 bg-[#affc40] text-slate-950 font-semibold rounded-lg hover:bg-[#affc40]/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                      {setupState.loading ? (
-                        <>
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          Creating Collection...
-                        </>
-                      ) : (
-                        'Create Collection'
-                      )}
-                    </button>
-                  </div>
-                )}
-                {setupState.coreCollection && (
-                  <button
-                    onClick={() => setSetupState((prev) => ({ ...prev, step: 'tree' }))}
-                    className="w-full px-6 py-3 bg-[#affc40] text-slate-950 font-semibold rounded-lg hover:bg-[#affc40]/90 transition-colors"
-                  >
-                    Continue to Merkle Tree
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {setupState.step === 'tree' && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-2xl font-semibold mb-2">Create Merkle Tree</h2>
-                <p className="text-slate-300 mb-6">
-                  Choose a tree size for compressed NFT positions. Tree size is fixed after creation and determines
-                  how many positions you can mint.
-                </p>
-                <p className="text-sm text-slate-400 mb-6">
-                  A one-time tree key is generated locally in your browser to create the account. It is not stored
-                  or uploaded, and you only need your wallet after setup.
-                </p>
-                {setupState.merkleTree && (
-                  <div className="p-4 bg-[#affc40]/10 border border-[#affc40]/50 rounded-lg mb-6">
-                    <div className="flex items-start gap-3">
-                      <CheckCircle className="w-5 h-5 text-[#affc40] flex-shrink-0 mt-0.5" />
-                      <div className="flex-1">
-                        <div className="font-semibold text-[#affc40] mb-2">Merkle Tree Created Successfully!</div>
-                        <div className="text-sm text-slate-300">
-                          Your merkle tree has been created. All addresses and important information will be shown at the end of the setup process.
-                        </div>
-                        {setupState.txSignatures?.tree && (
-                          <div className="text-xs text-slate-400 mt-2 break-all">
-                            Transaction: {setupState.txSignatures.tree}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {!setupState.merkleTree && (
-                  <div className="space-y-4">
-                    <div className="space-y-3">
-                      {TREE_OPTIONS.map((option) => {
-                        const selected = option.id === selectedTreeOptionId
-                        return (
-                          <button
-                            key={option.id}
-                            type="button"
-                            onClick={() => setSelectedTreeOptionId(option.id)}
-                            className={`w-full text-left p-4 rounded-xl border transition-colors ${
-                              selected
-                                ? 'border-[#affc40] bg-[#affc40]/10'
-                                : 'border-slate-700 bg-slate-800/40 hover:border-[#affc40]/60'
-                            }`}
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div>
-                                <div className="text-sm text-slate-400">Number of cNFTs</div>
-                                <div className="text-lg font-semibold text-white">{formatNumber(option.cnftCount)}</div>
-                              </div>
-                              <div className="text-sm text-slate-300">
-                                Depth {option.treeDepth} | Canopy {option.canopyDepth} | Buffer {option.concurrencyBuffer}
-                              </div>
-                            </div>
-                            <div className="mt-2 text-xs text-slate-400">
-                              Tree cost {formatSol(option.treeCostSol)} SOL | {option.costPerCnft.toFixed(8)} SOL per cNFT
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                    <div className="p-4 bg-blue-500/10 border border-blue-500/50 rounded-lg text-sm text-blue-200">
-                      Estimated rent for the selected tree: {formatSol(selectedTreeOption.treeCostSol)} SOL. Costs are paid
-                      once at creation and are non-refundable.
-                    </div>
-                    <button
-                      onClick={handleCreateTree}
-                      disabled={setupState.loading || !setupState.networkReady}
-                      className="w-full px-6 py-3 bg-[#affc40] text-slate-950 font-semibold rounded-lg hover:bg-[#affc40]/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                      {setupState.loading ? (
-                        <>
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          Creating Merkle Tree...
-                        </>
-                      ) : (
-                        'Create Merkle Tree'
-                      )}
-                    </button>
-                  </div>
-                )}
-                {setupState.merkleTree && (
-                  <button
-                    onClick={() => setSetupState((prev) => ({ ...prev, step: 'verify' }))}
-                    className="w-full px-6 py-3 bg-[#affc40] text-slate-950 font-semibold rounded-lg hover:bg-[#affc40]/90 transition-colors"
-                  >
-                    Continue to Verification
-                  </button>
-                )}
               </div>
             </div>
           )}
@@ -1621,8 +1507,7 @@ export default function MarketCreatorSetup() {
               <div>
                 <h2 className="text-2xl font-semibold mb-2">Verify Market Creator</h2>
                 <p className="text-slate-300 mb-6">
-                  Verify your market creator with the collection and merkle tree. You&apos;ll need to provide the addresses
-                  if you created them elsewhere. Addresses are pre-filled if you created them in this wizard.
+                  Confirm the collection and tree. Use the prefilled values or paste existing addresses.
                 </p>
                 <div className="space-y-4">
                   <div>
@@ -1694,7 +1579,7 @@ export default function MarketCreatorSetup() {
               <div>
                 <h2 className="text-2xl font-semibold mb-2">Validate Setup</h2>
                 <p className="text-slate-300 mb-6">
-                  Validating your market creator setup to ensure everything is configured correctly.
+                  Run a final on-chain check for authority and delegate alignment.
                 </p>
                 {setupState.txSignatures?.verify && (
                   <div className="mb-4 text-xs text-slate-400 break-all">
@@ -1728,8 +1613,8 @@ export default function MarketCreatorSetup() {
                 </h2>
                 <p className="text-slate-300 mb-6">
                   {setupState.verified && setupState.marketCreator 
-                    ? 'Your market creator is already set up and verified. Your configuration is shown below.'
-                    : 'Your market creator has been successfully set up. Save all information below - some items will only be shown once.'}
+                    ? 'Market creator is already verified. Configuration is below.'
+                    : 'Setup complete. Save this configuration; some items are shown only once.'}
                 </p>
               </div>
 
@@ -1741,13 +1626,13 @@ export default function MarketCreatorSetup() {
                     <div className="font-semibold text-blue-400 text-lg mb-2">Important</div>
                     <div className="text-sm text-blue-300 space-y-2">
                       <div>
-                        <strong>You only need your wallet to manage your market creator.</strong> The collection&apos;s update authority and tree&apos;s delegate are both set to your market creator PDA, which you control with your wallet.
+                        <strong>Your wallet controls the market creator PDA.</strong> The collection update authority and tree delegate are set to that PDA.
                       </div>
                       <div>
-                        <strong>No additional private keys are needed</strong> for normal operations like creating markets, managing fees, or updating settings. Your connected wallet has full control through the market creator PDA.
+                        <strong>No extra private keys needed</strong> for creating markets, updating fees, or managing settings.
                       </div>
                       <div>
-                        Temporary account keys used during setup are generated locally in your browser and discarded immediately after creation.
+                        Temporary keys are generated locally and discarded after use.
                       </div>
                     </div>
                   </div>
@@ -1953,19 +1838,19 @@ export default function MarketCreatorSetup() {
               <div className="p-4 bg-[#affc40]/10 border border-[#affc40]/30 rounded-lg">
                 <div className="font-semibold text-[#affc40] mb-2">Next Steps</div>
                 <ul className="text-sm text-slate-300 space-y-1 list-disc list-inside mb-4">
-                  <li><strong>Download the JSON file</strong> and store it in a secure location (password manager, encrypted drive)</li>
-                  <li><strong>Your wallet is all you need</strong> - no additional private keys required for normal operations</li>
-                  <li>You can now start creating markets using the admin console or SDK</li>
-                  <li>Check the documentation for examples and best practices</li>
+                  <li><strong>Save the JSON config</strong> in a secure place.</li>
+                  <li><strong>Your wallet is the only key</strong> you need for normal operations.</li>
+                  <li>Open the Creator Console to create markets.</li>
+                  <li>Use the docs for SDK automation and examples.</li>
                 </ul>
               </div>
 
-              {/* Big button to go to management page */}
+              {/* Big button to go to creator console */}
               <Link 
-                href="/manage" 
+                href="/creator" 
                 className="block w-full px-8 py-4 bg-[#affc40] text-slate-950 font-bold text-lg rounded-lg hover:bg-[#affc40]/90 transition-colors text-center flex items-center justify-center gap-3"
               >
-                <span>Go to Management Page</span>
+                <span>Open Creator Console</span>
                 <ArrowRight className="w-5 h-5" />
               </Link>
             </div>

@@ -3,7 +3,6 @@
 import { createContext, useContext, useMemo, useState, useEffect } from 'react'
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react'
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base'
-import { WalletModalProvider } from '@solana/wallet-adapter-react-ui'
 import {
   PhantomWalletAdapter,
   SolflareWalletAdapter,
@@ -63,7 +62,7 @@ export function WalletContextProvider({ children }: { children: React.ReactNode 
     <SolanaNetworkContext.Provider value={{ network, setNetwork }}>
       <ConnectionProvider endpoint={endpoint}>
         <WalletProvider wallets={wallets} autoConnect>
-          <WalletModalProvider>{children}</WalletModalProvider>
+          {children}
         </WalletProvider>
       </ConnectionProvider>
     </SolanaNetworkContext.Provider>
