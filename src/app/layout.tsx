@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import React from 'react'
+import { WalletContextProvider } from '@/components/wallet-provider'
 
 export const metadata: Metadata = {
   title: 'depredict: Prediction Infrastructure for Solana',
@@ -11,8 +12,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`antialiased`}>
-
+        <WalletContextProvider>
           {children}
+        </WalletContextProvider>
       </body>
     </html>
   )

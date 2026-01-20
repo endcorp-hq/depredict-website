@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import Image from 'next/image'
-import { ArrowRight, ArrowUpRight, Layers, Rocket, ShieldCheck, Zap } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, Layers, ShieldCheck, Zap } from 'lucide-react'
 
 export default function PredictionMarketLanding() {
   return (
@@ -26,6 +26,12 @@ export default function PredictionMarketLanding() {
           </div>
 
           <nav className="hidden md:flex items-center gap-6 text-sm text-slate-300">
+            <Link href="/signup" className="hover:text-[#affc40] transition-colors">
+              Sign Up
+            </Link>
+            <Link href="/manage" className="hover:text-[#affc40] transition-colors">
+              Manage
+            </Link>
             <Link href="https://docs.depredict.xyz" className="hover:text-[#affc40] transition-colors" target="_blank" rel="noreferrer">
               Docs
             </Link>
@@ -64,12 +70,10 @@ export default function PredictionMarketLanding() {
             </p>
             <div className="mt-10 flex flex-col sm:flex-row items-center gap-4">
               <Link
-                href="https://forms.gle/gTaywXj9T55TUgX29"
-                target="_blank"
-                rel="noreferrer"
+                href="/signup"
                 className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-[#affc40] to-[#9cf529] text-base font-semibold text-slate-950 shadow-lg shadow-[0_18px_30px_-16px_rgba(175,252,64,0.6)] hover:from-[#caff61] hover:to-[#affc40] transition-all"
               >
-                Join the Waitlist
+                Sign Up as Market Creator
                 <ArrowRight className="w-4 h-4" />
               </Link>
               <Link
